@@ -1,0 +1,944 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>RadioGuessr</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css"/>
+<link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700;900&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0e0c08;
+  --panel: #161209;
+  --border: #3a2e14;
+  --amber: #e8a020;
+  --amber-dim: #7a5010;
+  --amber-glow: rgba(232,160,32,0.15);
+  --green: #39e87a;
+  --green-dim: #1a5c35;
+  --text: #f0d898;
+  --muted: #7a6840;
+  --danger: #e84040;
+  --scan: #e8a020;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body {
+  height: 100%; width: 100%;
+  font-family: 'DM Sans', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ── SCANLINES ── */
+body::after {
+  content: '';
+  position: fixed; inset: 0;
+  background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,.08) 2px, rgba(0,0,0,.08) 4px);
+  pointer-events: none;
+  z-index: 9999;
+}
+
+/* ── LAYOUT ── */
+.app { display: flex; flex-direction: column; height: 100%; }
+
+/* ── HEADER ── */
+header {
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  padding: 10px 16px;
+  display: flex; align-items: center; justify-content: space-between;
+  flex-shrink: 0;
+  position: relative;
+}
+header::after {
+  content: '';
+  position: absolute; bottom: 0; left: 0; right: 0; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--amber), transparent);
+}
+.logo {
+  font-family: 'Orbitron', monospace;
+  font-size: 18px; font-weight: 900;
+  letter-spacing: 2px;
+  color: var(--amber);
+  text-shadow: 0 0 12px var(--amber);
+}
+.logo span { color: var(--text); text-shadow: none; }
+.hud { display: flex; align-items: center; gap: 20px; }
+.hud-block { text-align: right; }
+.hud-lbl { font-family: 'Share Tech Mono', monospace; font-size: 8px; letter-spacing: 2px; color: var(--muted); text-transform: uppercase; }
+.hud-val { font-family: 'Orbitron', monospace; font-size: 18px; color: var(--amber); line-height: 1; text-shadow: 0 0 8px var(--amber-dim); }
+.pips { display: flex; gap: 6px; align-items: center; }
+.pip { width: 8px; height: 8px; border-radius: 50%; background: var(--border); border: 1px solid var(--amber-dim); transition: all .3s; }
+.pip.done { background: var(--amber-dim); border-color: var(--amber); }
+.pip.cur  { background: var(--amber); border-color: var(--amber); box-shadow: 0 0 8px var(--amber); }
+
+/* ── RADIO PANEL ── */
+#radio-panel {
+  flex-shrink: 0;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+  padding: 16px;
+  display: flex; flex-direction: column; gap: 14px;
+}
+
+/* Frequency display */
+.freq-display {
+  background: #050403;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px 16px;
+  display: flex; align-items: center; justify-content: space-between;
+  position: relative;
+  overflow: hidden;
+}
+.freq-display::before {
+  content: '';
+  position: absolute; inset: 0;
+  background: radial-gradient(ellipse at 50% 0%, rgba(232,160,32,.06) 0%, transparent 70%);
+}
+.freq-text {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 28px;
+  color: var(--amber);
+  text-shadow: 0 0 16px var(--amber), 0 0 4px var(--amber);
+  letter-spacing: 3px;
+  min-width: 160px;
+}
+.freq-unit { font-family: 'Share Tech Mono', monospace; font-size: 12px; color: var(--muted); letter-spacing: 2px; }
+
+/* Signal bars */
+.signal-bars {
+  display: flex; align-items: flex-end; gap: 3px; height: 28px;
+}
+.bar {
+  width: 5px; border-radius: 2px 2px 0 0;
+  background: var(--border);
+  transition: background .2s, height .2s;
+}
+.bar.lit { background: var(--green); box-shadow: 0 0 4px var(--green); }
+
+/* Station info */
+.station-info {
+  display: flex; align-items: center; gap: 12px;
+}
+.station-flag { font-size: 28px; line-height: 1; filter: drop-shadow(0 2px 4px rgba(0,0,0,.5)); }
+.station-details { flex: 1; min-width: 0; }
+.station-name {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 13px; color: var(--amber);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.station-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.station-name.hidden-name { color: var(--muted); font-style: italic; }
+
+/* Play button */
+.play-row { display: flex; align-items: center; gap: 12px; }
+#play-btn {
+  width: 52px; height: 52px; border-radius: 50%;
+  background: var(--amber-glow);
+  border: 2px solid var(--amber);
+  color: var(--amber);
+  font-size: 22px;
+  cursor: pointer; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  transition: all .2s;
+  text-shadow: 0 0 8px var(--amber);
+  box-shadow: 0 0 16px var(--amber-glow), inset 0 0 12px var(--amber-glow);
+}
+#play-btn:hover { background: rgba(232,160,32,.25); box-shadow: 0 0 24px var(--amber-glow), inset 0 0 16px var(--amber-glow); }
+#play-btn.playing { border-color: var(--green); color: var(--green); background: rgba(57,232,122,.1); box-shadow: 0 0 16px rgba(57,232,122,.2); text-shadow: 0 0 8px var(--green); }
+#play-btn.loading { animation: pulse-btn 1s ease-in-out infinite; }
+@keyframes pulse-btn { 0%,100%{ opacity:1; } 50%{ opacity:.4; } }
+
+.play-instructions { flex: 1; }
+.play-instructions p { font-size: 12px; color: var(--muted); line-height: 1.5; }
+.play-instructions strong { color: var(--text); font-weight: 500; }
+
+/* Skip button */
+#skip-btn {
+  background: none; border: 1px solid var(--border);
+  color: var(--muted); font-size: 11px; letter-spacing: 1px;
+  padding: 6px 12px; border-radius: 6px; cursor: pointer;
+  font-family: 'Share Tech Mono', monospace;
+  transition: all .2s;
+}
+#skip-btn:hover { border-color: var(--muted); color: var(--text); }
+
+/* Mode toggle */
+.mode-row {
+  display: flex; gap: 8px; align-items: center;
+}
+.mode-btn {
+  flex: 1; padding: 7px 10px;
+  background: none; border: 1px solid var(--border);
+  color: var(--muted); font-family: 'Share Tech Mono', monospace;
+  font-size: 10px; letter-spacing: 1px; text-transform: uppercase;
+  border-radius: 6px; cursor: pointer; transition: all .2s;
+  text-align: center;
+}
+.mode-btn.active {
+  border-color: var(--amber); color: var(--amber);
+  background: var(--amber-glow);
+  box-shadow: 0 0 8px var(--amber-glow);
+}
+.mode-btn.active.talk {
+  border-color: var(--green); color: var(--green);
+  background: rgba(57,232,122,.08);
+  box-shadow: 0 0 8px rgba(57,232,122,.15);
+}
+.mode-lbl {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 9px; color: var(--muted); letter-spacing: 1px;
+  text-transform: uppercase; white-space: nowrap;
+}
+
+/* Volume slider */
+.vol-row { display: flex; align-items: center; gap: 10px; }
+.vol-lbl { font-family: 'Share Tech Mono', monospace; font-size: 10px; color: var(--muted); letter-spacing: 1px; width: 24px; }
+input[type=range] {
+  flex: 1; -webkit-appearance: none; appearance: none;
+  height: 3px; background: var(--border); border-radius: 2px; outline: none;
+}
+input[type=range]::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 14px; height: 14px; border-radius: 50%;
+  background: var(--amber); cursor: pointer;
+  box-shadow: 0 0 6px var(--amber);
+}
+
+/* ── MAP PANEL ── */
+#map-panel {
+  flex: 1; display: flex; flex-direction: column; overflow: hidden;
+  position: relative;
+}
+#guess-map { flex: 1; }
+
+/* map instruction overlay */
+#map-hint-bar {
+  position: absolute; top: 8px; left: 50%; transform: translateX(-50%);
+  background: rgba(14,12,8,.85);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  padding: 5px 14px;
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 11px; color: var(--muted);
+  letter-spacing: 1px;
+  white-space: nowrap;
+  z-index: 500;
+  pointer-events: none;
+  backdrop-filter: blur(4px);
+}
+
+/* ── GUESS FOOTER ── */
+#guess-footer {
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  padding: 12px 16px;
+  flex-shrink: 0;
+}
+#guess-btn {
+  width: 100%;
+  background: var(--amber);
+  color: var(--bg);
+  font-family: 'Orbitron', monospace;
+  font-size: 16px; font-weight: 700; letter-spacing: 3px;
+  border: none; padding: 14px; border-radius: 8px; cursor: pointer;
+  transition: opacity .2s, box-shadow .2s;
+  box-shadow: 0 0 20px rgba(232,160,32,.3);
+}
+#guess-btn:disabled { background: var(--border); color: var(--muted); box-shadow: none; cursor: not-allowed; }
+#guess-btn:not(:disabled):active { opacity: .85; }
+
+/* ── LOADING OVERLAY ── */
+#loading-overlay {
+  display: none; position: fixed; inset: 0; z-index: 300;
+  background: rgba(14,12,8,.95);
+  flex-direction: column; align-items: center; justify-content: center; gap: 20px;
+  backdrop-filter: blur(4px);
+}
+#loading-overlay.show { display: flex; }
+.loading-dial {
+  width: 80px; height: 80px;
+  border: 3px solid var(--border);
+  border-top-color: var(--amber);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  box-shadow: 0 0 20px var(--amber-glow);
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.loading-text {
+  font-family: 'Share Tech Mono', monospace;
+  font-size: 13px; color: var(--amber);
+  letter-spacing: 2px; text-align: center;
+}
+.loading-sub { font-size: 11px; color: var(--muted); letter-spacing: 1px; }
+
+/* ── RESULT OVERLAY ── */
+#result-overlay {
+  display: none; position: fixed; inset: 0; z-index: 400;
+  background: rgba(14,12,8,.97);
+  flex-direction: column; overflow-y: auto;
+}
+#result-overlay.show { display: flex; }
+.res-inner {
+  flex: 1; display: flex; flex-direction: column;
+  align-items: center; padding: 16px; gap: 14px;
+  min-height: 100%; justify-content: center;
+}
+#rmap { width: 100%; max-width: 480px; height: 200px; border-radius: 10px; border: 1px solid var(--border); flex-shrink: 0; }
+.rcard {
+  width: 100%; max-width: 480px;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 12px; padding: 22px; text-align: center;
+}
+.rcard-station {
+  display: flex; align-items: center; gap: 12px;
+  background: rgba(232,160,32,.05); border: 1px solid var(--border);
+  border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; text-align: left;
+}
+.rcard-flag { font-size: 32px; }
+.rcard-info { flex: 1; min-width: 0; }
+.rcard-name { font-family: 'Share Tech Mono', monospace; font-size: 13px; color: var(--amber); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.rcard-country { font-size: 12px; color: var(--muted); margin-top: 3px; }
+.rtitle { font-family: 'Share Tech Mono', monospace; font-size: 9px; letter-spacing: 3px; text-transform: uppercase; color: var(--muted); margin-bottom: 4px; }
+.rscore { font-family: 'Orbitron', monospace; font-size: 72px; font-weight: 900; line-height: 1; color: var(--amber); text-shadow: 0 0 20px var(--amber-dim); }
+.rpts { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
+.rgrade { font-size: 13px; padding: 4px 14px; border-radius: 20px; display: inline-block; margin-bottom: 10px; }
+.g-perfect { background: rgba(57,232,122,.12); color: var(--green); border: 1px solid var(--green-dim); }
+.g-great   { background: rgba(232,160,32,.12); color: var(--amber); border: 1px solid var(--amber-dim); }
+.g-ok      { background: rgba(255,140,60,.12); color: #ff8c3c; border: 1px solid #7a4010; }
+.g-miss    { background: rgba(232,64,64,.12);  color: var(--danger); border: 1px solid #7a1414; }
+.rdist { font-size: 14px; color: var(--muted); margin-bottom: 18px; }
+.rdist span { color: var(--text); font-weight: 500; }
+.ract { display: flex; flex-direction: column; gap: 10px; }
+.btn-p {
+  background: var(--amber); color: var(--bg);
+  font-family: 'Orbitron', monospace; font-size: 15px; font-weight: 700; letter-spacing: 2px;
+  border: none; padding: 14px; border-radius: 8px; cursor: pointer; width: 100%;
+  box-shadow: 0 0 16px rgba(232,160,32,.3);
+}
+.btn-p:active { opacity: .85; }
+.btn-s {
+  background: transparent; color: var(--muted); font-size: 13px;
+  border: 1px solid var(--border); padding: 12px;
+  border-radius: 8px; cursor: pointer; width: 100%;
+  font-family: 'Share Tech Mono', monospace; letter-spacing: 1px;
+}
+.btn-s:active { border-color: var(--text); color: var(--text); }
+
+/* leaflet overrides */
+.leaflet-container { background: #e8e8e8; }
+.leaflet-tooltip {
+  background: #fff !important; border: 1px solid #ccc !important;
+  color: #222 !important; font-family: 'DM Sans', sans-serif !important;
+  font-size: 11px !important; border-radius: 6px !important;
+  box-shadow: 0 2px 6px rgba(0,0,0,.15) !important;
+}
+.leaflet-tooltip-top::before { border-top-color: #ccc !important; }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- HEADER -->
+  <header>
+    <div class="logo">Radio<span>Guessr</span></div>
+    <div class="hud">
+      <div class="pips" id="pips"></div>
+      <div class="hud-block">
+        <div class="hud-lbl">Score</div>
+        <div class="hud-val" id="hud-score">0</div>
+      </div>
+    </div>
+  </header>
+
+  <!-- RADIO PANEL -->
+  <div id="radio-panel">
+
+    <!-- Frequency display -->
+    <div class="freq-display">
+      <div>
+        <div class="freq-unit">SHORTWAVE</div>
+        <div class="freq-text" id="freq-text">---·-</div>
+      </div>
+      <div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px">
+        <div class="signal-bars" id="signal-bars">
+          <div class="bar" style="height:6px"  id="b0"></div>
+          <div class="bar" style="height:10px" id="b1"></div>
+          <div class="bar" style="height:14px" id="b2"></div>
+          <div class="bar" style="height:18px" id="b3"></div>
+          <div class="bar" style="height:22px" id="b4"></div>
+        </div>
+        <div class="freq-unit" id="codec-lbl">MP3</div>
+      </div>
+    </div>
+
+    <!-- Station info -->
+    <div class="station-info">
+      <div class="station-flag" id="station-flag">📡</div>
+      <div class="station-details">
+        <div class="station-name hidden-name" id="station-name">Scanning…</div>
+        <div class="station-meta" id="station-meta">Finding a live station</div>
+      </div>
+      <button id="skip-btn" onclick="skipStation()">SKIP ↻</button>
+    </div>
+
+    <!-- Mode toggle -->
+    <div class="mode-row">
+      <span class="mode-lbl">Mode:</span>
+      <button class="mode-btn active" id="mode-any" onclick="setMode('any')">🎵 Any</button>
+      <button class="mode-btn talk" id="mode-talk" onclick="setMode('talk')">🎙 Talk Only</button>
+    </div>
+
+    <!-- Play + volume -->
+    <div class="play-row">
+      <button id="play-btn" onclick="togglePlay()">▶</button>
+      <div class="play-instructions">
+        <p><strong>Listen</strong> to the station.<br>
+        Identify the language &amp; drop a pin on the map below.</p>
+      </div>
+    </div>
+
+    <div class="vol-row">
+      <span class="vol-lbl">🔈</span>
+      <input type="range" id="vol-slider" min="0" max="1" step="0.05" value="0.8" oninput="setVolume(this.value)">
+      <span class="vol-lbl">🔊</span>
+    </div>
+
+  </div>
+
+  <!-- MAP PANEL -->
+  <div id="map-panel">
+    <div id="map-hint-bar">TAP THE MAP TO DROP YOUR PIN</div>
+    <div id="guess-map"></div>
+  </div>
+
+  <!-- GUESS FOOTER -->
+  <div id="guess-footer">
+    <button id="guess-btn" disabled onclick="submitGuess()">PLACE YOUR GUESS</button>
+  </div>
+
+</div>
+
+<!-- LOADING OVERLAY -->
+<div id="loading-overlay">
+  <div class="loading-dial"></div>
+  <div class="loading-text">SCANNING FREQUENCIES</div>
+  <div class="loading-sub" id="loading-sub">Searching for live stations…</div>
+</div>
+
+<!-- RESULT OVERLAY -->
+<div id="result-overlay">
+  <div class="res-inner">
+    <div id="rmap"></div>
+    <div class="rcard">
+      <div class="rcard-station">
+        <div class="rcard-flag" id="r-flag">📡</div>
+        <div class="rcard-info">
+          <div class="rcard-name" id="r-name">—</div>
+          <div class="rcard-country" id="r-country">—</div>
+        </div>
+      </div>
+      <div class="rtitle" id="rtitle">Round Score</div>
+      <div class="rscore" id="rscore">0</div>
+      <div class="rpts">points</div>
+      <div class="rgrade" id="rgrade"></div>
+      <div class="rdist">You were <span id="rdist">—</span> away</div>
+      <div class="ract">
+        <button class="btn-p" id="next-btn" onclick="nextRound()">NEXT ROUND →</button>
+        <button class="btn-s" id="listen-again-btn" onclick="listenAgain()">▶ Listen again</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+// ─────────────────────────────────────────────
+// CONFIG
+// ─────────────────────────────────────────────
+const TOTAL = 5;
+const API = 'https://de1.api.radio-browser.info/json';
+
+// Diverse country pool with flag emojis & approximate center coords
+// We fetch real live stations from the API for each country
+const COUNTRY_POOL = [
+  { code:'FR', name:'France',           flag:'🇫🇷', lat:46.2,  lng:2.2   },
+  { code:'DE', name:'Germany',          flag:'🇩🇪', lat:51.2,  lng:10.5  },
+  { code:'JP', name:'Japan',            flag:'🇯🇵', lat:36.2,  lng:138.3 },
+  { code:'BR', name:'Brazil',           flag:'🇧🇷', lat:-14.2, lng:-51.9 },
+  { code:'MX', name:'Mexico',           flag:'🇲🇽', lat:23.6,  lng:-102.6},
+  { code:'ES', name:'Spain',            flag:'🇪🇸', lat:40.5,  lng:-3.7  },
+  { code:'IT', name:'Italy',            flag:'🇮🇹', lat:41.9,  lng:12.6  },
+  { code:'RU', name:'Russia',           flag:'🇷🇺', lat:61.5,  lng:105.3 },
+  { code:'CN', name:'China',            flag:'🇨🇳', lat:35.9,  lng:104.2 },
+  { code:'IN', name:'India',            flag:'🇮🇳', lat:20.6,  lng:78.9  },
+  { code:'AR', name:'Argentina',        flag:'🇦🇷', lat:-38.4, lng:-63.6 },
+  { code:'TR', name:'Turkey',           flag:'🇹🇷', lat:38.9,  lng:35.2  },
+  { code:'PL', name:'Poland',           flag:'🇵🇱', lat:51.9,  lng:19.1  },
+  { code:'NL', name:'Netherlands',      flag:'🇳🇱', lat:52.1,  lng:5.3   },
+  { code:'SE', name:'Sweden',           flag:'🇸🇪', lat:60.1,  lng:18.6  },
+  { code:'GR', name:'Greece',           flag:'🇬🇷', lat:39.1,  lng:21.8  },
+  { code:'PT', name:'Portugal',         flag:'🇵🇹', lat:39.4,  lng:-8.2  },
+  { code:'KR', name:'South Korea',      flag:'🇰🇷', lat:35.9,  lng:127.8 },
+  { code:'EG', name:'Egypt',            flag:'🇪🇬', lat:26.8,  lng:30.8  },
+  { code:'ZA', name:'South Africa',     flag:'🇿🇦', lat:-30.6, lng:22.9  },
+  { code:'NG', name:'Nigeria',          flag:'🇳🇬', lat:9.1,   lng:8.7   },
+  { code:'CO', name:'Colombia',         flag:'🇨🇴', lat:4.6,   lng:-74.1 },
+  { code:'VN', name:'Vietnam',          flag:'🇻🇳', lat:14.1,  lng:108.3 },
+  { code:'UA', name:'Ukraine',          flag:'🇺🇦', lat:48.4,  lng:31.2  },
+  { code:'RO', name:'Romania',          flag:'🇷🇴', lat:45.9,  lng:24.9  },
+  { code:'HU', name:'Hungary',          flag:'🇭🇺', lat:47.2,  lng:19.5  },
+  { code:'CZ', name:'Czech Republic',   flag:'🇨🇿', lat:49.8,  lng:15.5  },
+  { code:'FI', name:'Finland',          flag:'🇫🇮', lat:61.9,  lng:25.7  },
+  { code:'NO', name:'Norway',           flag:'🇳🇴', lat:60.5,  lng:8.5   },
+  { code:'TH', name:'Thailand',         flag:'🇹🇭', lat:15.9,  lng:100.9 },
+];
+
+// ─────────────────────────────────────────────
+// STATE
+// ─────────────────────────────────────────────
+let rounds = [], curr = 0, totalScore = 0;
+let talkMode = false;
+let currentStation = null;
+let stationPool = [];      // full list for current country
+let stationPoolIdx = 0;    // which one we're trying
+let audio = null;
+let isPlaying = false;
+let pinLL = null, pin = null;
+let gMap = null, rMap = null;
+let signalInterval = null;
+let freqInterval = null;
+let skipCount = 0;
+
+// ─────────────────────────────────────────────
+// INIT
+// ─────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', () => {
+  buildPips();
+  initMap();
+  startGame();
+});
+
+function setMode(mode) {
+  talkMode = (mode === 'talk');
+  document.getElementById('mode-any').classList.toggle('active', !talkMode);
+  document.getElementById('mode-any').classList.remove('talk');
+  document.getElementById('mode-talk').classList.toggle('active', talkMode);
+  // Update play instructions text
+  const inst = document.querySelector('.play-instructions p');
+  if (talkMode) {
+    inst.innerHTML = '<strong>Talk radio mode.</strong> Listen for language &amp; accent clues — no music to help you!';
+  } else {
+    inst.innerHTML = '<strong>Listen</strong> to the station.<br>Identify the language &amp; drop a pin on the map below.';
+  }
+}
+
+async function startGame() {
+  showLoading('INITIALIZING…');
+  const shuffled = [...COUNTRY_POOL].sort(() => Math.random() - .5);
+  rounds = shuffled.slice(0, TOTAL);
+  curr = 0; totalScore = 0; skipCount = 0;
+  updateHUD();
+  hideLoading();
+  await loadRound();
+}
+
+// ─────────────────────────────────────────────
+// ROUND MANAGEMENT
+// ─────────────────────────────────────────────
+async function loadRound() {
+  stopAudio();
+  pinLL = null; pin = null;
+  document.getElementById('guess-btn').disabled = true;
+  document.getElementById('guess-btn').textContent = 'PLACE YOUR GUESS';
+  document.getElementById('result-overlay').classList.remove('show');
+  if (gMap) {
+    gMap.setView([20, 0], 2);
+    gMap.eachLayer(l => { if (l instanceof L.CircleMarker) gMap.removeLayer(l); });
+  }
+  syncPips(); updateHUD();
+  resetRadioUI();
+  await fetchStation(rounds[curr]);
+}
+
+async function fetchStation(country, attempt = 0) {
+  showLoading(`SCANNING ${country.name.toUpperCase()}…`);
+  try {
+    const params = new URLSearchParams({
+      countrycode: country.code,
+      lastcheckok: '1',
+      limit: '100',
+      order: 'clickcount',
+      reverse: 'true',
+      hidebroken: 'true',
+    });
+
+    // In talk mode fetch news-tagged stations specifically
+    if (talkMode) params.set('tag', 'news');
+
+    const res = await fetch(`${API}/stations/search?${params}`);
+    const stations = await res.json();
+
+    // Words that strongly suggest speech/news content
+    const SPEECH_WORDS = [
+      'news','talk','info','actualit','noticias','nachrichten','информ','nouvelles',
+      'radio nacional','radio nacional','public radio','npr','bbc','rfi','dw',
+      'actualidad','periodico','journal','noticia','talkback','all news',
+      'sport news','business','politics','government','parliament'
+    ];
+    // Words that strongly suggest music — exclude these
+    const MUSIC_WORDS = [
+      'music','hits','fm 10','top 40','pop','rock','jazz','classic','oldies',
+      'country','dance','techno','house','rnb','r&b','hip hop','lounge',
+      'smooth','gold','mix','chart','playlist','beat','groove','sound',
+      'easy','adult contemporary','soft','wave','flow'
+    ];
+
+    let viable = stations.filter(s =>
+      s.url_resolved &&
+      s.lastcheckok == 1 &&
+      !s.url_resolved.includes('.m3u8') &&
+      !s.url_resolved.includes('.pls') &&
+      (s.codec || '').toLowerCase() !== 'unknown'
+    );
+
+    if (talkMode && viable.length > 0) {
+      // Score each station: +2 for speech word match, -3 for music word match
+      const scored = viable.map(s => {
+        const text = ((s.name||'') + ' ' + (s.tags||'')).toLowerCase();
+        let score = 0;
+        SPEECH_WORDS.forEach(w => { if (text.includes(w)) score += 2; });
+        MUSIC_WORDS.forEach(w => { if (text.includes(w)) score -= 3; });
+        return { s, score };
+      });
+
+      // Only keep positive-scored stations, sorted best first
+      const talkOnly = scored.filter(x => x.score > 0).sort((a,b) => b.score - a.score).map(x => x.s);
+
+      if (talkOnly.length >= 3) viable = talkOnly;
+      // else fall through with full list — better than nothing
+    }
+
+    if (!viable.length && attempt < 3) {
+      const alt = COUNTRY_POOL.filter(c => c.code !== country.code);
+      return fetchStation(alt[Math.floor(Math.random() * alt.length)], attempt + 1);
+    }
+
+    // Shuffle within score tiers: take top 20, shuffle those
+    const top = viable.slice(0, 20).sort(() => Math.random() - .5);
+    stationPool = [...top, ...viable.slice(20)];
+    stationPoolIdx = 0;
+    hideLoading();
+    tryNextStation(country);
+
+  } catch (err) {
+    console.error(err);
+    hideLoading();
+    document.getElementById('station-meta').textContent = 'API error — tap Skip';
+  }
+}
+
+function tryNextStation(country) {
+  if (stationPoolIdx >= stationPool.length) {
+    document.getElementById('station-meta').textContent = 'No working streams found — tap Skip';
+    return;
+  }
+  const pick = stationPool[stationPoolIdx++];
+  currentStation = { ...pick, country };
+  displayStation(pick, country);
+  animateFreq();
+  // Auto-start so user doesn't have to tap play every time after a retry
+  startAudio();
+}
+
+function displayStation(station, country) {
+  // Hide real country info — show only that we found a signal
+  document.getElementById('station-flag').textContent = '📡';
+  document.getElementById('station-name').textContent = '████████ ██ ████';
+  document.getElementById('station-name').classList.add('hidden-name');
+  const modeTag = talkMode ? ' · 🎙 Talk' : '';
+  document.getElementById('station-meta').textContent =
+    `${station.codec || 'MP3'} · ${station.bitrate || '?'} kbps · Signal acquired${modeTag}`;
+  document.getElementById('codec-lbl').textContent = station.codec || 'MP3';
+  setSignal(3 + Math.floor(Math.random() * 3));
+}
+
+// ─────────────────────────────────────────────
+// AUDIO
+// ─────────────────────────────────────────────
+function togglePlay() {
+  if (!currentStation) return;
+  if (isPlaying) {
+    stopAudio();
+  } else {
+    startAudio();
+  }
+}
+
+function startAudio() {
+  if (audio) { audio.pause(); audio.src = ''; audio = null; }
+  if (!currentStation) return;
+
+  audio = new Audio();
+  // Do NOT set crossOrigin — it causes CORS preflight failures on streams
+  // that don't send CORS headers, which is most of them
+  audio.volume = parseFloat(document.getElementById('vol-slider').value);
+  audio.src = currentStation.url_resolved || currentStation.url;
+
+  setPlayState('loading');
+  isPlaying = true;
+
+  let didPlay = false;
+
+  audio.addEventListener('playing', () => {
+    didPlay = true;
+    setPlayState('playing');
+    document.getElementById('station-meta').textContent =
+      `${currentStation.codec || 'MP3'} · ${currentStation.bitrate || '?'} kbps · Live`;
+    animateSignal();
+  });
+
+  audio.addEventListener('error', () => {
+    if (!didPlay) {
+      // Silently try the next station in the pool
+      console.warn('Stream failed, trying next:', currentStation.url_resolved);
+      tryNextStation(currentStation.country);
+    } else {
+      setPlayState('stopped');
+      isPlaying = false;
+    }
+  });
+
+  // Timeout: if no 'playing' event after 8s, move on
+  setTimeout(() => {
+    if (!didPlay && isPlaying) {
+      console.warn('Stream timeout, trying next');
+      tryNextStation(currentStation.country);
+    }
+  }, 8000);
+
+  audio.play().catch(() => {
+    // Autoplay policy blocked — show manual play button
+    setPlayState('stopped');
+    isPlaying = false;
+    document.getElementById('station-meta').textContent = 'Tap ▶ to start playing';
+  });
+}
+
+function stopAudio() {
+  if (audio) { audio.pause(); audio.src = ''; audio = null; }
+  isPlaying = false;
+  setPlayState('stopped');
+  setSignal(0);
+  clearInterval(signalInterval);
+}
+
+function setPlayState(state) {
+  const btn = document.getElementById('play-btn');
+  btn.classList.remove('playing', 'loading');
+  if (state === 'playing') {
+    btn.textContent = '⏹';
+    btn.classList.add('playing');
+    animateSignal();
+  } else if (state === 'loading') {
+    btn.textContent = '◌';
+    btn.classList.add('loading');
+  } else {
+    btn.textContent = '▶';
+  }
+}
+
+function setVolume(v) {
+  if (audio) audio.volume = parseFloat(v);
+}
+
+function animateSignal() {
+  clearInterval(signalInterval);
+  signalInterval = setInterval(() => {
+    const strength = 2 + Math.floor(Math.random() * 4);
+    setSignal(strength);
+  }, 300);
+}
+
+function setSignal(n) {
+  for (let i = 0; i < 5; i++) {
+    const b = document.getElementById(`b${i}`);
+    if (b) b.classList.toggle('lit', i < n);
+  }
+}
+
+function animateFreq() {
+  clearInterval(freqInterval);
+  const targets = ['7.185', '9.430', '11.675', '13.820', '15.195', '17.640', '21.455'];
+  const target = targets[Math.floor(Math.random() * targets.length)];
+  document.getElementById('freq-text').textContent = target + ' MHz';
+}
+
+function resetRadioUI() {
+  clearInterval(signalInterval);
+  clearInterval(freqInterval);
+  setSignal(0);
+  document.getElementById('freq-text').textContent = '---·-';
+  document.getElementById('station-flag').textContent = '📡';
+  document.getElementById('station-name').textContent = 'Scanning…';
+  document.getElementById('station-name').classList.add('hidden-name');
+  document.getElementById('station-meta').textContent = 'Finding a live station';
+  document.getElementById('play-btn').textContent = '▶';
+  document.getElementById('play-btn').classList.remove('playing', 'loading');
+}
+
+async function skipStation() {
+  skipCount++;
+  stopAudio();
+  resetRadioUI();
+  // Try next in current pool first; re-fetch if exhausted
+  if (stationPoolIdx < stationPool.length) {
+    const country = rounds[curr];
+    displayStation(stationPool[stationPoolIdx], country);
+    animateFreq();
+    tryNextStation(country);
+  } else {
+    await fetchStation(rounds[curr]);
+  }
+}
+
+// ─────────────────────────────────────────────
+// MAP
+// ─────────────────────────────────────────────
+function initMap() {
+  gMap = L.map('guess-map', { center:[20,0], zoom:2, zoomControl:true, attributionControl:false });
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom:18 }).addTo(gMap);
+  gMap.on('click', e => {
+    pinLL = e.latlng;
+    if (pin) gMap.removeLayer(pin);
+    pin = L.circleMarker(e.latlng, { radius:11, color:'#e8a020', fillColor:'#e8a020', fillOpacity:.9, weight:2 }).addTo(gMap);
+    document.getElementById('guess-btn').disabled = false;
+    document.getElementById('guess-btn').textContent = 'CONFIRM GUESS ✓';
+    document.getElementById('map-hint-bar').textContent = 'PIN PLACED — CONFIRM OR REPOSITION';
+  });
+}
+
+// ─────────────────────────────────────────────
+// SCORING
+// ─────────────────────────────────────────────
+function submitGuess() {
+  if (!pinLL || !currentStation) return;
+  stopAudio();
+
+  const actual = L.latLng(currentStation.country.lat, currentStation.country.lng);
+  const distKm = actual.distanceTo(pinLL) / 1000;
+  const pts = Math.round(5000 * Math.exp(-distKm / 2000));
+  totalScore += pts;
+
+  showResult(pts, distKm);
+}
+
+function showResult(pts, distKm) {
+  const country = currentStation.country;
+
+  // Reveal station info in result card
+  document.getElementById('r-flag').textContent = country.flag;
+  document.getElementById('r-name').textContent = currentStation.name || 'Unknown Station';
+  document.getElementById('r-country').textContent = `${country.name} · ${currentStation.language || '?'}`;
+
+  document.getElementById('rtitle').textContent = curr < TOTAL-1 ? `Round ${curr+1}` : 'Final Round';
+  document.getElementById('rscore').textContent = pts.toLocaleString();
+  document.getElementById('rdist').textContent = fmtDist(distKm);
+
+  const g = document.getElementById('rgrade');
+  if (distKm < 300)       { g.textContent='🎯 Spot on!';        g.className='rgrade g-perfect'; }
+  else if (distKm < 1500) { g.textContent='✨ Close!';           g.className='rgrade g-great'; }
+  else if (distKm < 4000) { g.textContent='👍 Not bad';          g.className='rgrade g-ok'; }
+  else                    { g.textContent='📻 Keep listening';   g.className='rgrade g-miss'; }
+
+  document.getElementById('next-btn').textContent = curr >= TOTAL-1 ? '🏆 FINAL SCORE' : 'NEXT ROUND →';
+  document.getElementById('result-overlay').classList.add('show');
+  updateHUD();
+  setTimeout(buildRMap, 80);
+}
+
+function buildRMap() {
+  if (rMap) { rMap.remove(); rMap = null; }
+  const el = document.getElementById('rmap');
+  rMap = L.map(el, { zoomControl:false, attributionControl:false });
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { maxZoom:18 }).addTo(rMap);
+
+  const aLL = L.latLng(currentStation.country.lat, currentStation.country.lng);
+  L.circleMarker(aLL, { radius:10, color:'#39e87a', fillColor:'#39e87a', fillOpacity:.9, weight:2 })
+    .addTo(rMap).bindTooltip('Actual', { permanent:true, direction:'top', offset:[0,-8] });
+
+  if (pinLL) {
+    L.circleMarker(pinLL, { radius:9, color:'#e8a020', fillColor:'#e8a020', fillOpacity:.9, weight:2 })
+      .addTo(rMap).bindTooltip('Your guess', { permanent:true, direction:'top', offset:[0,-8] });
+    L.polyline([aLL, pinLL], { color:'#e8a020', weight:2, dashArray:'6 4', opacity:.7 }).addTo(rMap);
+    rMap.fitBounds(L.latLngBounds([aLL, pinLL]), { padding:[36,36] });
+  } else { rMap.setView(aLL, 3); }
+}
+
+async function nextRound() {
+  curr++;
+  if (curr >= TOTAL) { showFinalScore(); return; }
+  await loadRound();
+}
+
+function listenAgain() {
+  document.getElementById('result-overlay').classList.remove('show');
+  // Re-fetch same country with same station info already in currentStation
+  startAudio();
+}
+
+function showFinalScore() {
+  if (rMap) { rMap.remove(); rMap = null; }
+  document.getElementById('rmap').style.display = 'none';
+  document.getElementById('rtitle').textContent = 'GAME OVER';
+  document.getElementById('rscore').textContent = totalScore.toLocaleString();
+  document.getElementById('rdist').innerHTML = `out of <span>${(TOTAL*5000).toLocaleString()}</span> possible`;
+  document.querySelector('.rcard-station').style.display = 'none';
+
+  const pct = totalScore / (TOTAL * 5000);
+  const g = document.getElementById('rgrade');
+  if (pct > .85)      { g.textContent='🏆 Master Linguist';    g.className='rgrade g-perfect'; }
+  else if (pct > .60) { g.textContent='🌍 Globe Trotter';      g.className='rgrade g-great'; }
+  else if (pct > .35) { g.textContent='📻 Radio Enthusiast';   g.className='rgrade g-ok'; }
+  else                { g.textContent='🌐 Keep Listening';      g.className='rgrade g-miss'; }
+
+  const nb = document.getElementById('next-btn');
+  nb.textContent = '↺ PLAY AGAIN'; nb.onclick = () => location.reload();
+  document.getElementById('listen-again-btn').style.display = 'none';
+  document.getElementById('result-overlay').classList.add('show');
+}
+
+// ─────────────────────────────────────────────
+// UI HELPERS
+// ─────────────────────────────────────────────
+function buildPips() {
+  const c = document.getElementById('pips'); c.innerHTML = '';
+  for (let i = 0; i < TOTAL; i++) {
+    const p = document.createElement('div');
+    p.className = 'pip' + (i === 0 ? ' cur' : ''); p.id = `p${i}`;
+    c.appendChild(p);
+  }
+}
+function syncPips() {
+  for (let i = 0; i < TOTAL; i++) {
+    const p = document.getElementById(`p${i}`);
+    if (p) p.className = 'pip' + (i < curr ? ' done' : i === curr ? ' cur' : '');
+  }
+}
+function updateHUD() { document.getElementById('hud-score').textContent = totalScore.toLocaleString(); }
+function showLoading(msg) {
+  document.getElementById('loading-sub').textContent = msg || '';
+  document.getElementById('loading-overlay').classList.add('show');
+}
+function hideLoading() { document.getElementById('loading-overlay').classList.remove('show'); }
+
+function fmtDist(km) {
+  if (km < 1) return `${Math.round(km*1000)} m`;
+  if (km < 100) return `${km.toFixed(1)} km`;
+  return `${Math.round(km).toLocaleString()} km`;
+}
+</script>
+</body>
+</html>
